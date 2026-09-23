@@ -1112,6 +1112,52 @@ public class StreamingTests extends StreamingTestBase {
         this.run6829Circuit(control);
     }
 
+    void runAsofRightTimestamp(CompilerCircuitStream ccs) {
+        ccs.step("INSERT INTO R VALUES(0, 3);", """
+                 rts | c | weight
+                ------------------""");
+        // After this step the waterlines are 30 for L.ts and 10 for R.ts.
+        ccs.step("INSERT INTO L VALUES(1, 30); INSERT INTO R VALUES(1, 10);", """
+                 rts | c | weight
+                ------------------
+                 10  | 1 | 1""");
+        // L(0, 35) is not late, and it matches R(0, 3), so rts = 3 is below
+        // both waterlines.
+        ccs.step("INSERT INTO L VALUES(0, 35);", """
+                 rts | c | weight
+                ------------------
+                 3   | 1 | 1""");
+        ccs.step("INSERT INTO L VALUES(0, 40);", """
+                 rts | c | weight
+                ------------------
+                 3   | 1 | -1
+                 3   | 2 | 1""");
+    }
+
+    @Test
+    public void asofRightTimestampNotMonotone() {
+        // The right timestamp of an ASOF JOIN output has no lower bound: a
+        // left row that is not late can match an arbitrarily old right row,
+        // and a new right row can retract such a match.  A GROUP BY on the
+        // right timestamp must therefore not garbage-collect its groups.
+        String sql = """
+                CREATE TABLE L (k BIGINT NOT NULL, ts BIGINT NOT NULL LATENESS 0);
+                CREATE TABLE R (k BIGINT NOT NULL, ts BIGINT NOT NULL LATENESS 0);
+                CREATE LOCAL VIEW V AS
+                SELECT L.k, L.ts AS lts, R.ts AS rts
+                FROM L LEFT ASOF JOIN R
+                MATCH_CONDITION(L.ts >= R.ts)
+                ON L.k = R.k;
+                CREATE VIEW C AS SELECT rts, COUNT(*) AS c FROM V GROUP BY rts;""";
+        CompilerCircuitStream ccs = this.getCCS(sql).compactAfterEachStep();
+        this.runAsofRightTimestamp(ccs);
+        // Control: no input row is late, so the program without LATENESS
+        // must produce the same outputs.
+        CompilerCircuitStream control = this.getCCS(
+                sql.replace(" LATENESS 0", "")).compactAfterEachStep();
+        this.runAsofRightTimestamp(control);
+    }
+
     @Test
     public void sessionGc() {
         // LATENESS on the SESSION timestamp column with SESSION windows.

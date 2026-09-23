@@ -663,14 +663,12 @@ public class Monotonicity extends CircuitVisitor {
                     }
                     break;
                 case 2:
+                    // No right field has a lower bound, not even the right
+                    // timestamp: a left row that is not late can match an
+                    // arbitrarily old right row, and a new right row can
+                    // retract such a match.
                     expr = r.deepCopy().deref().field(index).castToNullable();
-                    if (index != node.rightTimestampIndex) {
-                        // Since this is not a streaming join, we can't say anything about
-                        // non-timestamp fields
-                        expr = new NoExpression(expr.getType());
-                    } else {
-                        expr = min.deepCopy().castToNullable();
-                    }
+                    expr = new NoExpression(expr.getType());
                     break;
                 default:
                     throw new InternalCompilerError("Unexpected input index " + input);
